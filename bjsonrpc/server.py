@@ -33,7 +33,7 @@
 """
 import socket, select
 
-from bjsonrpc.connection import Connection
+from bjsonrpc.connection import Connection, split_by_newline
 from bjsonrpc.exceptions import EofError
 
 class Server(object):
@@ -61,6 +61,7 @@ class Server(object):
         self._handler = handler_factory
         self._debug_socket = False
         self._debug_dispatch = False
+        self._split=split_by_newline
         self._serve = True
         self._http = http
     
@@ -102,7 +103,21 @@ class Server(object):
             self._debug_dispatch = value
             
         return ret
-        
+
+    def split_by(self, split_by):
+        """
+            Selects the function used to split the JSON stream into chunks.
+
+            Argument is a function that takes a string and returns the
+            position to split at - or None, if the string contains only
+            a partial JSON object.
+
+            Useful splitter functions are Connection.split_by_newline (the
+            default, fastest) or Connection.split_by_json (which looks at
+            nested JSON objects to avoid needing to wait for newlines).
+        """
+        self._split = split_by
+    
     def serve(self):
         """
             Starts the forever-serving loop. This function only exits when an
@@ -153,6 +168,7 @@ class Server(object):
                     connidx[clientsck.fileno()] = conn
                     conn._debug_socket = self._debug_socket
                     conn._debug_dispatch = self._debug_socket
+                    conn.split = self._split
                     # conn.internal_error_callback = self.
                     
                     connections.append(conn)

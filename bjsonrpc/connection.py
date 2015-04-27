@@ -167,6 +167,41 @@ class RemoteObject(object):
         
         
 
+
+
+def split_by_newline(s):
+    """ In a string as part of a JSON stream, find split position simply by
+    looking for newlines. Returns position to split at, or None if only
+    partial data (no newline) found. """
+    p=s.find('\n')
+    return p+1 if p>=0 else None
+
+def split_by_json(s):
+    """ In a string as part of a JSON stream, find split position by looking
+    at first (nested) JSON structure. Returns position to split at, or None if
+    only partial data found. """
+    l=0
+    in_string=False
+
+    i=0
+    while i<len(s):
+        c=s[i]
+
+        if c=='"':
+            in_string=not in_string
+        elif in_string:
+            if c=='\\':
+                i+=1
+        else:
+            if c in "[{":
+                l+=1
+            if c in "]}":
+                l-=1
+                if l<=0:
+                    return i+1
+        i+=1
+    return None
+    
 class Connection(object): # TODO: Split this class in simple ones
     """ 
         Represents a communiation tunnel between two parties.
@@ -254,7 +289,9 @@ class Connection(object): # TODO: Split this class in simple ones
         return cls._maxtimeout[operation]
     
     
-    def __init__(self, sck, address = None, handler_factory = None, http=False):
+    def __init__(self, sck, address = None, handler_factory = None,
+                 http=False):
+        self.split=split_by_newline
         self._debug_socket = False
         self._debug_dispatch = False
         self._buffer = b''
@@ -520,13 +557,14 @@ class Connection(object): # TODO: Split this class in simple ones
                     
         if not ready_to_read: return 0
             
-        newline_idx = 0
         count = 0
-        while newline_idx != -1:
+        while True:
             if not self.read_and_dispatch(timeout=0): 
                 break
             count += 1
-            newline_idx = self._buffer.find(b'\n')
+            if self.split(self._buffer)==None:
+                break
+
         return count
             
     def read_and_dispatch(self, timeout=None, thread=True, condition=None):
@@ -877,13 +915,20 @@ class Connection(object): # TODO: Split this class in simple ones
 
     def _readn(self):
         """
-            Internal function which reads from socket waiting for a newline
+            Internal function which reads from socket and splits into
+            individual JSON messages
         """
+
         streambuffer = self._buffer
-        pos = streambuffer.find(b'\n')
         #_log.debug("read...")
         #retry = 0
-        while pos == -1:
+        pos=0
+
+        while True:
+            pos = self.split(streambuffer)
+            if pos!=None:
+                break
+
             data = b''
             try:
                 data = self._sck.recv(2048)
@@ -915,12 +960,10 @@ class Connection(object): # TODO: Split this class in simple ones
                 raise EofError(len(streambuffer))
             #_log.debug("readbuf+: %r", data)
             streambuffer += data
-            pos = streambuffer.find(b'\n')
 
-        self._buffer = streambuffer[pos + 1:]
-        streambuffer = streambuffer[:pos]
+        self._buffer = streambuffer[pos:]
         #_log.debug("read: %r", buffer)
-        return streambuffer
+        return streambuffer[:pos]
         
     def serve(self):
         """
